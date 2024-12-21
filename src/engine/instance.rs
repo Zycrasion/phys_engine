@@ -1,18 +1,18 @@
-use std::time::Instant;
+use std::{mem::size_of, time::Instant};
 
 use env_logger::filter::Filter;
 use vecto_rs::linear::{Vector, VectorTrait};
 use wgpu::{
-    core::instance, util::{BufferInitDescriptor, DeviceExt}, AddressMode, BindGroup, BindGroupDescriptor, BindGroupEntry, BindGroupLayout, BindGroupLayoutDescriptor, BindGroupLayoutEntry, BindingResource, BindingType, Buffer, BufferUsages, Color, FilterMode, FragmentState, ImageCopyTextureBase, Operations, Origin3d, PipelineCompilationOptions, PipelineLayoutDescriptor, PresentMode, RenderPassColorAttachment, RenderPassDescriptor, RenderPipelineDescriptor, SamplerBindingType, SamplerDescriptor, ShaderModuleDescriptor, ShaderStages, StoreOp, Texture, TextureDescriptor, TextureSampleType, TextureUsages, TextureViewDescriptor, TextureViewDimension
+    core::instance, util::{BufferInitDescriptor, DeviceExt}, AddressMode, BindGroup, BindGroupDescriptor, BindGroupEntry, BindGroupLayout, BindGroupLayoutDescriptor, BindGroupLayoutEntry, BindingResource, BindingType, Buffer, BufferSize, BufferUsages, Color, FilterMode, FragmentState, ImageCopyTextureBase, Operations, Origin3d, PipelineCompilationOptions, PipelineLayoutDescriptor, PresentMode, RenderPassColorAttachment, RenderPassDescriptor, RenderPipelineDescriptor, SamplerBindingType, SamplerDescriptor, ShaderModuleDescriptor, ShaderStages, StoreOp, Texture, TextureDescriptor, TextureSampleType, TextureUsages, TextureViewDescriptor, TextureViewDimension
 };
 use winit::{dpi::PhysicalSize, event::WindowEvent, window::Window};
 
-use super::{Camera, ParticleInstance, RawParticleInstance, Vertex};
-use crate::SIDE_LENGTH;
+use super::{fps::FPSCounter, Camera, ParticleInstance, RawParticleInstance, Vertex};
+use crate::{SIDE_LENGTH};
 
 const TRIANGLE_VERTS: &[Vertex] = &[
     Vertex {
-        position: [0.5, 0.866025, 0.0],
+        position: [0.86603, 1.5, 0.0],
         tex_coords: [0.5, 1. - 0.866025],
     },
     Vertex {
@@ -20,7 +20,7 @@ const TRIANGLE_VERTS: &[Vertex] = &[
         tex_coords: [0.0, 1.],
     },
     Vertex {
-        position: [1.0, 0.0, 0.0],
+        position: [1.73205, 0.0, 0.0],
         tex_coords: [1.0, 1.],
     },
 ];
@@ -41,8 +41,7 @@ pub struct Instance<'a> {
     instances : Vec<ParticleInstance>,
     instance_buffer : Buffer,
 
-    frame_count : u32,
-    start : Instant
+    fps : FPSCounter
 }
 
 impl<'a> Instance<'a> {
@@ -205,11 +204,7 @@ impl<'a> Instance<'a> {
 
         for i in 0..instance_count
         {
-            instances.push(ParticleInstance
-            {
-                position : Vector::new2((i / side_length) as f32 + 0.5, (i % side_length) as f32 + 0.5),
-                velocity : Vector::new2(0., 0.)
-            });
+            instances.push(ParticleInstance::new((i / side_length) as f32 + 0.5, (i % side_length) as f32 + 0.5));
         }
 
         let raw_instances = instances.iter().map(ParticleInstance::raw).collect::<Vec<_>>();
@@ -282,8 +277,7 @@ impl<'a> Instance<'a> {
             particle_bind_group,
             instance_buffer,
             instances,
-            frame_count : 0,
-            start : Instant::now()
+            fps : FPSCounter::new(),
         }
     }
 
@@ -301,8 +295,16 @@ impl<'a> Instance<'a> {
     }
 
     pub fn update(&mut self) {
+
         self.camera.update(&self.queue);
-        self.queue.write_buffer(&self.instance_buffer, 0, bytemuck::cast_slice(&self.instances.iter_mut().map(|f| {f.update(); f.raw()}).collect::<Vec<_>>()));
+        let mut buffer_view = self.queue.write_buffer_with(&self.instance_buffer, 0, BufferSize::new(std::mem::size_of::<[RawParticleInstance; SIDE_LENGTH * SIDE_LENGTH]>() as u64).unwrap()).unwrap();
+        let writable : &mut [RawParticleInstance]= bytemuck::cast_slice_mut(buffer_view.as_mut());
+        self.instances.iter_mut().enumerate().for_each(|(i, v)|
+        {
+            v.update(writable.get_mut(i).unwrap());
+        });
+        self.queue.submit([]);
+
     }
 
     pub fn render(&mut self) -> Result<(), wgpu::SurfaceError> {
@@ -351,14 +353,18 @@ impl<'a> Instance<'a> {
 
         self.queue.submit(std::iter::once(encoder.finish()));
         output.present();
-        self.frame_count += 1;
 
         Ok(())
     }
 
+    pub fn frametime(&mut self, ft : f32) 
+    {
+        self.fps.add_frametime(ft);
+    }
+
     pub fn estimate_fps(&self) -> f32
     {
-        (self.frame_count as f32) / self.start.elapsed().as_secs_f32()
+        self.fps.get_fps() as f32
     }
 
     pub fn reconfig(&mut self) {

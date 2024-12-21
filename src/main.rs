@@ -1,3 +1,5 @@
+use std::time::Instant;
+
 use phys_engine::{engine::{Instance, Vertex}, SIDE_LENGTH};
 use winit::{dpi::PhysicalSize, event::{self, ElementState, Event, KeyEvent, WindowEvent}, event_loop::EventLoop, keyboard::{KeyCode, PhysicalKey}, window::WindowBuilder};
 
@@ -33,6 +35,7 @@ async fn run()
                 },
                 WindowEvent::RedrawRequested =>
                 {
+                    let start = Instant::now();
                     instance.window().set_title(&format!("Rendering {} particles at {} fps", SIDE_LENGTH * SIDE_LENGTH, instance.estimate_fps()));
                     instance.window().request_redraw();
                     instance.update();
@@ -55,6 +58,7 @@ async fn run()
                             log::warn!("Timeout")
                         }
                     }
+                    instance.frametime(start.elapsed().as_secs_f32());
                 }
                 _ => {}
             },

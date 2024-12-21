@@ -29,7 +29,7 @@ fn vs_main(
 {
     var out : VertexOutput;
     
-    let offset = vec2<f32>(0.5, 0.288675134595);
+    let offset = vec2<f32>(0.86603, 0.5);
 
     out.clip_position = camera.proj_view * vec4<f32>(model.position.xy + instance.offset - offset, model.position.z, 1.0);
     out.uv = model.uv;

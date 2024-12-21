@@ -1,11 +1,14 @@
 mod cam;
 mod instance;
+mod fps;
 
 use bytemuck::{Pod, Zeroable};
 pub use cam::*;
 pub use instance::*;
-use vecto_rs::linear::{Mat4, Vector, Vector4};
+use vecto_rs::linear::{Mat4, Vector, Vector4, VectorTrait};
 use wgpu::{vertex_attr_array, VertexAttribute, VertexBufferLayout, VertexFormat, VertexStepMode};
+
+use crate::SIDE_LENGTH;
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, bytemuck::Pod, bytemuck::Zeroable)]
@@ -28,7 +31,7 @@ impl Vertex {
 #[derive(Clone, Copy)]
 pub struct ParticleInstance {
     position: Vector,
-    velocity : Vector,
+    old_position : Vector,
 }
 
 #[repr(C)]
@@ -38,15 +41,40 @@ pub struct RawParticleInstance {
 }
 
 impl ParticleInstance {
-    pub fn update(&mut self)
+    pub fn new(x : f32, y : f32) -> Self
     {
-        // self.velocity.y -= 0.01;
-        // if self.position.y < 0.0
-        // {
-        //     self.velocity.y *= -1.;
-        // }
-        // self.position += self.velocity;
+        Self
+        {
+            position : Vector::new2(x, y),
+            old_position : Vector::new2(x, y)
+        }
+    }
+    
+    pub fn update(&mut self, raw : &mut RawParticleInstance)
+    {
+        let mut velocity = self.position - self.old_position;
+        velocity.y -= 0.01;
+        self.position += velocity;
+        self.old_position = self.position - velocity;
+        if self.position.y < 0.5
+        {
+            self.old_position.y = self.position.y + velocity.y;
+            self.position.y = 0.5;
+        }
+        if self.position.x < -0.5
+        {
+            self.old_position.x += SIDE_LENGTH as f32;
+            self.position.x += SIDE_LENGTH as f32;
+        }
 
+        if self.position.x > SIDE_LENGTH as f32 + 0.5
+        {
+            self.old_position.x -= SIDE_LENGTH as f32;
+            self.position.x -= SIDE_LENGTH as f32;
+        }
+
+        raw.offset_vector[0] = self.position.x;
+        raw.offset_vector[1] = self.position.y;
     }
 
     pub fn raw(&self) -> RawParticleInstance {
