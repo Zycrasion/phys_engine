@@ -3,12 +3,23 @@ use std::{mem::size_of, time::Instant};
 use env_logger::filter::Filter;
 use vecto_rs::linear::{Vector, VectorTrait};
 use wgpu::{
-    core::instance, util::{BufferInitDescriptor, DeviceExt}, AddressMode, BindGroup, BindGroupDescriptor, BindGroupEntry, BindGroupLayout, BindGroupLayoutDescriptor, BindGroupLayoutEntry, BindingResource, BindingType, Buffer, BufferSize, BufferUsages, Color, FilterMode, FragmentState, ImageCopyTextureBase, Operations, Origin3d, PipelineCompilationOptions, PipelineLayoutDescriptor, PresentMode, RenderPassColorAttachment, RenderPassDescriptor, RenderPipelineDescriptor, SamplerBindingType, SamplerDescriptor, ShaderModuleDescriptor, ShaderStages, StoreOp, Texture, TextureDescriptor, TextureSampleType, TextureUsages, TextureViewDescriptor, TextureViewDimension
+    core::instance,
+    util::{BufferInitDescriptor, DeviceExt},
+    AddressMode, BindGroup, BindGroupDescriptor, BindGroupEntry, BindGroupLayout,
+    BindGroupLayoutDescriptor, BindGroupLayoutEntry, BindingResource, BindingType, Buffer,
+    BufferSize, BufferUsages, Color, FilterMode, FragmentState, ImageCopyTextureBase, Operations,
+    Origin3d, PipelineCompilationOptions, PipelineLayoutDescriptor, PresentMode,
+    RenderPassColorAttachment, RenderPassDescriptor, RenderPipelineDescriptor, SamplerBindingType,
+    SamplerDescriptor, ShaderModuleDescriptor, ShaderStages, StoreOp, Texture, TextureDescriptor,
+    TextureSampleType, TextureUsages, TextureViewDescriptor, TextureViewDimension,
 };
 use winit::{dpi::PhysicalSize, event::WindowEvent, window::Window};
 
-use super::{fps::FPSCounter, Camera, ParticleInstance, RawParticleInstance, Vertex};
-use crate::{SIDE_LENGTH};
+use super::{
+    compute::ParticleCompute, fps::FPSCounter, Camera, ParticleInstance, RawParticleInstance,
+    Vertex,
+};
+use crate::SIDE_LENGTH;
 
 const TRIANGLE_VERTS: &[Vertex] = &[
     Vertex {
@@ -38,10 +49,10 @@ pub struct Instance<'a> {
     camera: Camera,
     particle_bind_group: BindGroup,
 
-    instances : Vec<ParticleInstance>,
-    instance_buffer : Buffer,
+    particle_compute: ParticleCompute,
+    mouse_position : Vector,
 
-    fps : FPSCounter
+    fps: FPSCounter,
 }
 
 impl<'a> Instance<'a> {
@@ -49,7 +60,7 @@ impl<'a> Instance<'a> {
         let size = window.inner_size();
 
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-            backends: wgpu::Backends::DX12, // Primary emits warnings/errors https://github.com/gfx-rs/wgpu/issues/3959, DX12 or Vulkan is fine
+            backends: wgpu::Backends::VULKAN, // Primary emits warnings/errors https://github.com/gfx-rs/wgpu/issues/3959, DX12 or Vulkan is fine
             ..Default::default()
         });
 
@@ -99,7 +110,7 @@ impl<'a> Instance<'a> {
             format: surface_format,
             width: size.width,
             height: size.height,
-            present_mode: PresentMode::Fifo,
+            present_mode: PresentMode::Immediate,
             alpha_mode: surface_caps.alpha_modes[0],
             view_formats: vec![],
             desired_maximum_frame_latency: 2,
@@ -198,22 +209,6 @@ impl<'a> Instance<'a> {
 
         let camera = Camera::new(size, &device);
 
-        let side_length = SIDE_LENGTH as usize;
-        let instance_count = side_length * side_length;
-        let mut instances = Vec::with_capacity(instance_count);
-
-        for i in 0..instance_count
-        {
-            instances.push(ParticleInstance::new((i / side_length) as f32 + 0.5, (i % side_length) as f32 + 0.5));
-        }
-
-        let raw_instances = instances.iter().map(ParticleInstance::raw).collect::<Vec<_>>();
-        let instance_buffer = device.create_buffer_init(&BufferInitDescriptor {
-            label : Some("Particle Instance Buffer"),
-            contents : bytemuck::cast_slice(&raw_instances),
-            usage : BufferUsages::VERTEX | BufferUsages::COPY_DST
-        });
-
         let pipeline_layout = device.create_pipeline_layout(&PipelineLayoutDescriptor {
             label: Some("Particle Shader Layout"),
             bind_group_layouts: &[&particle_bind_group_layout, camera.layout()],
@@ -262,7 +257,9 @@ impl<'a> Instance<'a> {
             label: Some("My Vertex Buffer"),
             contents: bytemuck::cast_slice(TRIANGLE_VERTS),
             usage: wgpu::BufferUsages::VERTEX,
-        });        
+        });
+
+        let particle_compute = ParticleCompute::new(&device);
 
         Self {
             window,
@@ -275,9 +272,9 @@ impl<'a> Instance<'a> {
             camera,
             vertex_buffer: buffer,
             particle_bind_group,
-            instance_buffer,
-            instances,
-            fps : FPSCounter::new(),
+            particle_compute,
+            fps: FPSCounter::new(),
+            mouse_position : Vector::default()
         }
     }
 
@@ -295,16 +292,8 @@ impl<'a> Instance<'a> {
     }
 
     pub fn update(&mut self) {
-
         self.camera.update(&self.queue);
-        let mut buffer_view = self.queue.write_buffer_with(&self.instance_buffer, 0, BufferSize::new(std::mem::size_of::<[RawParticleInstance; SIDE_LENGTH * SIDE_LENGTH]>() as u64).unwrap()).unwrap();
-        let writable : &mut [RawParticleInstance]= bytemuck::cast_slice_mut(buffer_view.as_mut());
-        self.instances.iter_mut().enumerate().for_each(|(i, v)|
-        {
-            v.update(writable.get_mut(i).unwrap());
-        });
-        self.queue.submit([]);
-
+        self.particle_compute.mouse(self.mouse_position, &self.queue);
     }
 
     pub fn render(&mut self) -> Result<(), wgpu::SurfaceError> {
@@ -320,6 +309,8 @@ impl<'a> Instance<'a> {
                 label: Some("Render Encoder"),
             });
 
+        self.particle_compute.compute(&mut encoder);
+        
         {
             let mut render_pass = encoder.begin_render_pass(&RenderPassDescriptor {
                 label: Some("Render Pass"),
@@ -347,8 +338,11 @@ impl<'a> Instance<'a> {
             render_pass.set_bind_group(1, self.camera.group(), &[]);
 
             render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
-            render_pass.set_vertex_buffer(1, self.instance_buffer.slice(..));
-            render_pass.draw(0..(TRIANGLE_VERTS.len() as u32), 0..self.instances.len() as _);
+            render_pass.set_vertex_buffer(1, self.particle_compute.get_particle_buffer());
+            render_pass.draw(
+                0..(TRIANGLE_VERTS.len() as u32),
+                0..self.particle_compute.particle_count() as _,
+            );
         }
 
         self.queue.submit(std::iter::once(encoder.finish()));
@@ -357,13 +351,11 @@ impl<'a> Instance<'a> {
         Ok(())
     }
 
-    pub fn frametime(&mut self, ft : f32) 
-    {
+    pub fn frametime(&mut self, ft: f32) {
         self.fps.add_frametime(ft);
     }
 
-    pub fn estimate_fps(&self) -> f32
-    {
+    pub fn estimate_fps(&self) -> f32 {
         self.fps.get_fps() as f32
     }
 
@@ -372,6 +364,14 @@ impl<'a> Instance<'a> {
     }
 
     pub fn input(&mut self, event: &WindowEvent) -> bool {
+        match event {
+            WindowEvent::CursorMoved { device_id, position } => 
+            {
+                self.mouse_position.x = position.x as f32;
+                self.mouse_position.y = SIDE_LENGTH as f32 - position.y as f32;
+            }
+            _ => {}
+        }
         false
     }
 

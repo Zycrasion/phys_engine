@@ -1,3 +1,3 @@
 pub mod engine;
 
-pub const SIDE_LENGTH : usize = 700;
+pub const SIDE_LENGTH : usize = 2500;

@@ -1,6 +1,7 @@
 mod cam;
 mod instance;
 mod fps;
+mod compute;
 
 use bytemuck::{Pod, Zeroable};
 pub use cam::*;
@@ -37,7 +38,8 @@ pub struct ParticleInstance {
 #[repr(C)]
 #[derive(Pod, Zeroable, Clone, Copy, Debug)]
 pub struct RawParticleInstance {
-    offset_vector : [f32; 2]
+    old_position : [f32; 2],
+    position : [f32; 2]
 }
 
 impl ParticleInstance {
@@ -73,13 +75,14 @@ impl ParticleInstance {
             self.position.x -= SIDE_LENGTH as f32;
         }
 
-        raw.offset_vector[0] = self.position.x;
-        raw.offset_vector[1] = self.position.y;
+        raw.position[0] = self.position.x;
+        raw.position[1] = self.position.y;
     }
 
     pub fn raw(&self) -> RawParticleInstance {
         RawParticleInstance {
-            offset_vector: [self.position.x, self.position.y],
+            position: [self.position.x, self.position.y],
+            old_position : [self.position.x, self.position.y + 0.1],
         }
     }
 }

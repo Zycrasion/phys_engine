@@ -117,7 +117,7 @@ impl Camera {
         let view = Mat4::new_translation(self.eye * -1.);
         let aspect = self.height / self.width;
 
-        let projection = Mat4::new_orthographic_matrix(0., SIDE_LENGTH as f32 * aspect, 0., SIDE_LENGTH as f32, 0.1, 10.);
+        let projection = Mat4::new_orthographic_matrix(0., SIDE_LENGTH as f32, 0., SIDE_LENGTH as f32 / aspect, 0.1, 10.);
         // let view = Mat4::new_perspective_matrix(1., 1., 40., 0.1, 100.);
 
         projection * view
